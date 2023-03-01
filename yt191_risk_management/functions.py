@@ -336,27 +336,36 @@ def historical_simulation(portfolio, prices, n=10000, alpha=0.05, code="ALL"):
 
 # Using generalized_t model for returns and calculate VaR.
 def generalized_t(portfolio, prices, n=10000, code="ALL"):
+    # Calculate the present value and returns for the portfolio
     pv, delta, assets, new_prices, out = calc_price(portfolio, prices, code)
     means = np.mean(out, axis=0)
-    assets_ = (out - means).columns
-    a_cdf = pd.DataFrame()
+    assets_ = out - means
+
+    # Use generalized t model to fit for each asset
+    assets_2 = assets_
     para_list = []
-    for asset in assets_:
-        df, loc, scale = mle_t_distribution(out[asset], fit=True)
-        para_list.append(mle_t_distribution(out[asset], fit=True))
-        a_cdf[asset] = t.cdf(out[asset], df=df, loc=loc, scale=scale)
+    for asset in assets_.columns:
+        df, loc, scale = mle_t_distribution(assets_[asset], fit=True)
+        para_list.append(mle_t_distribution(assets_[asset], fit=True))
+        # Transform the observation vector Xi in to a uniform vector Ui using the CDF for xi
+        assets_2[asset] = t.cdf(assets_[asset], df=df, loc=loc, scale=scale)
 
-    mat = a_cdf.corr(method='spearman')
+    # Transform the uniform vector Ui into a Standard Normal vector Zi
+    assets_2 = pd.DataFrame(norm.ppf(assets_), index=assets_.index, columns=assets_.columns)
+    # calculate the correlation matrix of Z
+    mat = assets_2.corr(method='spearman')
+    # Simulation NSim draws from the multivariate normal
     sim = pd.DataFrame(simulation(mat, n, 1), columns=out.columns)
-    s_cdf = pd.DataFrame()
-    for asset in sim.columns:
-        s_cdf[asset] = norm.cdf(sim[asset], loc=0, scale=1)
+    # Transform Z into a uniform variable using the standard normal CDF
+    assets_3 = pd.DataFrame(norm.cdf(sim), index=sim.index, columns=sim.columns)
 
-    s_returns = pd.DataFrame()
+    # Transform Ui into the fitted distribution using the quantile of the fitted distribution
+    assets_4 = pd.DataFrame()
     for i in range(len(sim.columns)):
         asset = sim.columns[i]
-        s_returns[asset] = t.ppf(s_cdf[asset], df=para_list[i][0], loc=para_list[i][1], scale=para_list[i][2])
-    pv_t = np.dot(s_returns * new_prices.iloc[-1].values[1:], assets["Holding"])
+        assets_4[asset] = t.ppf(assets_3[asset], df=para_list[i][0], loc=para_list[i][1], scale=para_list[i][2])
 
+    # Calculate the pv and VaR
+    pv_t = np.dot(assets_4 * new_prices.iloc[-1].values[1:], assets["Holding"])
     var_t = calculate_var(pv_t)
     return pv_t, var_t
